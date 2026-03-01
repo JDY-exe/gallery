@@ -44,6 +44,28 @@ npm run dev
 curl http://localhost:8787/api/health
 ```
 
+## Docker deploy (frontend + backend)
+
+1. Copy `backend/.env.example` to `backend/.env` and set real values.
+2. In Supabase SQL Editor, run `backend/supabase/schema.sql`.
+3. From repo root, build and run:
+
+```bash
+docker compose up -d --build
+```
+
+4. Open frontend at:
+
+```text
+http://localhost:8080
+```
+
+5. Backend API is also available directly at:
+
+```text
+http://localhost:8787
+```
+
 ## Mock auth (for MVP route testing)
 
 Protected routes accept a mock user header while `ENABLE_MOCK_AUTH=true`:
