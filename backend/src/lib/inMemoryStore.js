@@ -47,8 +47,10 @@ export function createInMemoryStore() {
   const profiles = new Map()
   const boards = new Map()
   const boardItems = new Map()
+  const adminUsers = new Set()
   const xConnections = new Map()
   const xSyncRuns = []
+  const xSyncState = new Map()
   const xOAuthStates = new Map()
 
   const ensureProfile = (userId, overrides = {}) => {
@@ -68,6 +70,7 @@ export function createInMemoryStore() {
   const seed = () => {
     const ownerUserId = 'demo-user'
     ensureProfile(ownerUserId, { displayName: 'Demo User', username: 'demo' })
+    adminUsers.add(ownerUserId)
 
     const boardId = crypto.randomUUID()
     const createdAt = nowIso()
@@ -86,7 +89,7 @@ export function createInMemoryStore() {
         id: crypto.randomUUID(),
         boardId,
         addedByUserId: ownerUserId,
-        sourceType: 'x_bookmark',
+        sourceType: 'x_like',
         sourcePostId: 'demo-post-1',
         sourcePostUrl: 'https://x.com/example/status/demo-post-1',
         sourceAuthorId: '12345',
@@ -116,7 +119,7 @@ export function createInMemoryStore() {
         id: crypto.randomUUID(),
         boardId,
         addedByUserId: ownerUserId,
-        sourceType: 'x_bookmark',
+        sourceType: 'x_like',
         sourcePostId: 'demo-post-2',
         sourcePostUrl: 'https://x.com/example/status/demo-post-2',
         sourceAuthorId: '67890',
@@ -150,7 +153,25 @@ export function createInMemoryStore() {
   seed()
 
   return {
+    kind: 'in-memory',
+
     ensureProfile,
+
+    isAdminUser(userId) {
+      return adminUsers.has(userId)
+    },
+
+    hasAdminUsers() {
+      return adminUsers.size > 0
+    },
+
+    grantAdminUser(userId) {
+      adminUsers.add(userId)
+      return {
+        userId,
+        createdAt: nowIso(),
+      }
+    },
 
     listBoards({ includePrivate = false, ownerUserId = null } = {}) {
       const summaries = []
@@ -177,6 +198,12 @@ export function createInMemoryStore() {
     },
 
     createBoard({ ownerUserId, title, description = null, isPublic = true }) {
+      for (const board of boards.values()) {
+        if (board.ownerUserId !== ownerUserId) continue
+        const items = boardItems.get(board.id) ?? []
+        return makePublicBoardSummary(board, items.length)
+      }
+
       const id = crypto.randomUUID()
       const timestamp = nowIso()
       const board = {
@@ -242,6 +269,10 @@ export function createInMemoryStore() {
       xUsername,
       scopes = [],
       status = 'connected',
+      accessTokenEncrypted = null,
+      refreshTokenEncrypted = null,
+      tokenExpiresAt = null,
+      tokenType = 'bearer',
     }) {
       const existing = xConnections.get(userId)
       const timestamp = nowIso()
@@ -252,6 +283,10 @@ export function createInMemoryStore() {
         xUsername,
         scopes,
         status,
+        accessTokenEncrypted,
+        refreshTokenEncrypted,
+        tokenExpiresAt,
+        tokenType,
         createdAt: existing?.createdAt ?? timestamp,
         updatedAt: timestamp,
       }
@@ -270,10 +305,21 @@ export function createInMemoryStore() {
         userId,
         triggeredBy,
         status: 'queued',
+        itemsCreated: 0,
+        itemsUpdated: 0,
+        rawResult: null,
+        errorMessage: null,
         createdAt: nowIso(),
       }
       xSyncRuns.push(entry)
       return { ...entry }
+    },
+
+    updateXSyncRun(runId, patch) {
+      const index = xSyncRuns.findIndex((run) => run.id === runId)
+      if (index < 0) return null
+      xSyncRuns[index] = { ...xSyncRuns[index], ...patch }
+      return { ...xSyncRuns[index] }
     },
 
     listXSyncRunsForUser(userId) {
@@ -282,9 +328,130 @@ export function createInMemoryStore() {
       }))
     },
 
+    getXSyncState(userId) {
+      const value = xSyncState.get(userId)
+      return value ? { ...value } : null
+    },
+
+    upsertXSyncState(userId, patch) {
+      const current = xSyncState.get(userId) ?? {
+        userId,
+        likeSinceId: null,
+        likeNextToken: null,
+        lastLikeSyncAt: null,
+        bookmarkSinceId: null,
+        bookmarkNextToken: null,
+        lastBookmarkSyncAt: null,
+        lastSyncStatus: null,
+        lastError: null,
+      }
+      const next = { ...current, ...patch }
+      xSyncState.set(userId, next)
+      return { ...next }
+    },
+
+    ensureDefaultBoard(userId) {
+      for (const board of boards.values()) {
+        if (board.ownerUserId === userId) {
+          const items = boardItems.get(board.id) ?? []
+          return makePublicBoardSummary(board, items.length)
+        }
+      }
+
+      return this.createBoard({
+        ownerUserId: userId,
+        title: 'My Moodboard',
+        description: 'Imported from X likes',
+        isPublic: true,
+      })
+    },
+
+    upsertBoardItemWithMedia({
+      boardId,
+      addedByUserId,
+      sourceType,
+      sourcePostId,
+      sourcePostUrl,
+      sourceAuthorId = null,
+      sourceAuthorUsername = null,
+      sourceAuthorDisplayName = null,
+      title = null,
+      caption = null,
+      media = [],
+      tags = [],
+      createdAt = null,
+    }) {
+      const list = boardItems.get(boardId) ?? []
+      let item = list.find(
+        (existing) =>
+          existing.sourceType === sourceType &&
+          existing.sourcePostId &&
+          sourcePostId &&
+          existing.sourcePostId === sourcePostId,
+      )
+
+      const timestamp = createdAt ?? nowIso()
+      const mappedMedia = media.map((m) => ({
+        id: m.id ?? crypto.randomUUID(),
+        mediaKey: m.mediaKey ?? null,
+        mediaType: m.mediaType ?? 'photo',
+        srcUrl: m.srcUrl,
+        width: m.width ?? null,
+        height: m.height ?? null,
+        altText: m.altText ?? null,
+        aspectRatio:
+          m.aspectRatio ??
+          (m.width && m.height ? Number(m.width) / Number(m.height) : null),
+        status: m.status ?? 'active',
+        createdAt: timestamp,
+      }))
+
+      if (!item) {
+        item = {
+          id: crypto.randomUUID(),
+          boardId,
+          addedByUserId,
+          sourceType,
+          sourcePostId,
+          sourcePostUrl,
+          sourceAuthorId,
+          sourceAuthorUsername,
+          sourceAuthorDisplayName,
+          title,
+          caption,
+          tags: Array.from(new Set(tags.filter(Boolean))),
+          createdAt: timestamp,
+          media: mappedMedia,
+        }
+        list.push(item)
+      } else {
+        Object.assign(item, {
+          sourcePostUrl,
+          sourceAuthorId,
+          sourceAuthorUsername,
+          sourceAuthorDisplayName,
+          title,
+          caption,
+          tags: Array.from(new Set(tags.filter(Boolean))),
+          media: mappedMedia,
+        })
+      }
+
+      boardItems.set(boardId, list)
+      const board = boards.get(boardId)
+      if (board) {
+        board.updatedAt = nowIso()
+        boards.set(boardId, board)
+      }
+
+      return mapItemToApiShape(item)
+    },
+
     deleteUserData(userId) {
       profiles.delete(userId)
+      adminUsers.delete(userId)
       xConnections.delete(userId)
+      xSyncState.delete(userId)
 
       const deletedBoardIds = []
       for (const board of boards.values()) {

@@ -1,10 +1,11 @@
 import { getAuthUser, requireAuth } from '../lib/auth.js'
 
-function canReadBoard(board, user) {
+async function canReadBoard(app, board, user) {
   if (!board) return false
-  if (board.isPublic) return true
-  if (!user) return false
-  return board.ownerUserId === user.id
+  if (user) return board.ownerUserId === user.id
+  if (!board.isPublic) return false
+  if (typeof app.store.isAdminUser !== 'function') return false
+  return Boolean(await app.store.isAdminUser(board.ownerUserId))
 }
 
 function canWriteBoard(board, user) {
@@ -15,20 +16,35 @@ function canWriteBoard(board, user) {
 export async function boardRoutes(app) {
   app.get('/api/boards', async (request) => {
     const user = await getAuthUser(request)
-    const boards = app.store.listBoards({
+    const boards = await app.store.listBoards({
       includePrivate: Boolean(user),
       ownerUserId: user?.id ?? null,
     })
 
+    let filteredBoards = boards
+    if (user) {
+      filteredBoards = boards.filter((board) => board.ownerUserId === user.id)
+    } else {
+      const publicBoards = boards.filter((board) => board.isPublic)
+      const adminFlags = await Promise.all(
+        publicBoards.map((board) =>
+          typeof app.store.isAdminUser === 'function'
+            ? app.store.isAdminUser(board.ownerUserId)
+            : Promise.resolve(false),
+        ),
+      )
+      filteredBoards = publicBoards.filter((_, index) => Boolean(adminFlags[index]))
+    }
+
     return {
-      boards,
+      boards: filteredBoards,
     }
   })
 
   app.get('/api/boards/:boardId', async (request, reply) => {
     const user = await getAuthUser(request)
-    const board = app.store.getBoard(request.params.boardId)
-    if (!canReadBoard(board, user)) {
+    const board = await app.store.getBoard(request.params.boardId)
+    if (!(await canReadBoard(app, board, user))) {
       return reply.code(404).send({ error: 'board_not_found' })
     }
 
@@ -37,12 +53,12 @@ export async function boardRoutes(app) {
 
   app.get('/api/boards/:boardId/items', async (request, reply) => {
     const user = await getAuthUser(request)
-    const board = app.store.getBoard(request.params.boardId)
-    if (!canReadBoard(board, user)) {
+    const board = await app.store.getBoard(request.params.boardId)
+    if (!(await canReadBoard(app, board, user))) {
       return reply.code(404).send({ error: 'board_not_found' })
     }
 
-    const items = app.store.getBoardItems(request.params.boardId) ?? []
+    const items = (await app.store.getBoardItems(request.params.boardId)) ?? []
     return {
       board,
       items,
@@ -52,6 +68,19 @@ export async function boardRoutes(app) {
   app.post('/api/boards', async (request, reply) => {
     const user = await requireAuth(request, reply)
     if (!user) return
+
+    const existingBoards = await app.store.listBoards({
+      includePrivate: true,
+      ownerUserId: user.id,
+    })
+    const existing = existingBoards.find((board) => board.ownerUserId === user.id) ?? null
+    if (existing) {
+      return reply.code(409).send({
+        error: 'single_board_enforced',
+        message: 'One moodboard per user is enabled. Reuse the existing board.',
+        board: existing,
+      })
+    }
 
     const body = request.body ?? {}
     const title =
@@ -72,7 +101,7 @@ export async function boardRoutes(app) {
         : null
     const isPublic = typeof body.isPublic === 'boolean' ? body.isPublic : true
 
-    const board = app.store.createBoard({
+    const board = await app.store.createBoard({
       ownerUserId: user.id,
       title,
       description,
@@ -86,7 +115,7 @@ export async function boardRoutes(app) {
     const user = await requireAuth(request, reply)
     if (!user) return
 
-    const board = app.store.getBoard(request.params.boardId)
+    const board = await app.store.getBoard(request.params.boardId)
     if (!canWriteBoard(board, user)) {
       return reply.code(404).send({ error: 'board_not_found' })
     }
@@ -111,7 +140,7 @@ export async function boardRoutes(app) {
       })
     }
 
-    const updatedBoard = app.store.updateBoard(request.params.boardId, patch)
+    const updatedBoard = await app.store.updateBoard(request.params.boardId, patch)
     return { board: updatedBoard }
   })
 
@@ -119,12 +148,15 @@ export async function boardRoutes(app) {
     const user = await requireAuth(request, reply)
     if (!user) return
 
-    const board = app.store.getBoard(request.params.boardId)
+    const board = await app.store.getBoard(request.params.boardId)
     if (!canWriteBoard(board, user)) {
       return reply.code(404).send({ error: 'board_not_found' })
     }
 
-    const result = app.store.deleteBoard(request.params.boardId)
-    return { deleted: true, result }
+    return reply.code(405).send({
+      error: 'single_board_enforced',
+      message: 'Deleting the only moodboard is disabled in single-board mode.',
+      board,
+    })
   })
 }

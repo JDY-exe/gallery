@@ -24,6 +24,7 @@ export function createSupabaseServices(config) {
 
   return {
     supabase: {
+      enabled: Boolean(hasUrl && serviceClient),
       anonClient,
       serviceClient,
     },

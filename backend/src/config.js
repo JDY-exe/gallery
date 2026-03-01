@@ -49,7 +49,7 @@ const envSchema = z.object({
     .default('http://localhost:8787/api/x/connect/callback'),
   X_SCOPES: z
     .string()
-    .default('tweet.read users.read bookmark.read offline.access users.read'),
+    .default('tweet.read users.read like.read offline.access'),
   X_API_BASE_URL: z.string().url().default('https://api.x.com/2'),
   X_OAUTH_AUTHORIZE_URL: z
     .string()
@@ -63,10 +63,8 @@ const envSchema = z.object({
 })
 
 function loadEnvFiles() {
-  const candidates = [
-    path.resolve(process.cwd(), '.env'),
-    path.resolve(__dirname, '../../.env'),
-  ]
+  const backendRoot = path.resolve(__dirname, '..')
+  const candidates = [path.resolve(backendRoot, '.env')]
 
   const loaded = []
   for (const filePath of candidates) {
@@ -90,7 +88,6 @@ export function loadConfig() {
         .filter(Boolean),
     ),
   )
-
   cachedConfig = {
     runtime: {
       nodeEnv: parsed.NODE_ENV,
