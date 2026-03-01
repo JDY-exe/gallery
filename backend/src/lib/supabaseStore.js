@@ -88,9 +88,27 @@ export function createSupabaseStore({ serviceClient }) {
   const db = serviceClient
 
   async function ensureProfile(userId, overrides = {}) {
+    let username = overrides.username ?? null
+    if (typeof username === 'string') {
+      username = username.trim() || null
+    }
+
+    if (username) {
+      const usernameCheck = await db
+        .from('profiles')
+        .select('id')
+        .eq('username', username)
+        .maybeSingle()
+      const usernameOwner = assertSupabaseSuccess(usernameCheck, 'ensureProfile:usernameCheck')
+      if (usernameOwner?.id && usernameOwner.id !== userId) {
+        // Keep the sign-in flow resilient if an old/stale profile still owns this username.
+        username = null
+      }
+    }
+
     const payload = {
       id: userId,
-      username: overrides.username ?? null,
+      username,
       display_name: overrides.displayName ?? 'User',
       email: overrides.email ?? null,
     }
