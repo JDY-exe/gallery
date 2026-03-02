@@ -28,5 +28,5 @@ jobs:
 
       - name: Restart Services
         run: |
-          sudo systemctl restart frontend
-          sudo systemctl restart backend
+          sudo systemctl restart gal-frontend
+          sudo systemctl restart gal-backend
