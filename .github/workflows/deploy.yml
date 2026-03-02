@@ -14,13 +14,16 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          
+
       - name: Inject Environment Variables
         run: |
-          # Create frontend .env
-          echo "${{ secrets.FRONTEND_ENV }}" > ./frontend/.env
-          # Create backend .env
-          echo "${{ secrets.BACKEND_ENV }}" > ./backend/.env
+          cat << 'EOF' > ./frontend/.env
+          ${{ secrets.FRONTEND_ENV }}
+          EOF
+
+          cat << 'EOF' > ./backend/.env
+          ${{ secrets.BACKEND_ENV }}
+          EOF
 
       - name: Build Frontend
         run: |
