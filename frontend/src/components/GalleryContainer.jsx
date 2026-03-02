@@ -595,7 +595,7 @@ export function GalleryContainer() {
             className="text-4xl font-serif tracking-tighter text-white italic"
             title="Toggle admin panel (Shift + A)"
           >
-            rumire
+            Taito
           </button>
         </div>
 
