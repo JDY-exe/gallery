@@ -114,8 +114,26 @@ function buttonClass(active = false) {
   }`
 }
 
+function parseCreatedAtTimestamp(value) {
+  if (typeof value !== 'string' || !value.trim()) return Number.NEGATIVE_INFINITY
+  const parsed = Date.parse(value)
+  return Number.isNaN(parsed) ? Number.NEGATIVE_INFINITY : parsed
+}
+
+function sortItemsByCreatedAtDesc(items) {
+  return [...items].sort((a, b) => {
+    const timestampDiff =
+      parseCreatedAtTimestamp(b?.createdAt) - parseCreatedAtTimestamp(a?.createdAt)
+    if (timestampDiff !== 0) return timestampDiff
+
+    const aId = typeof a?.id === 'string' ? a.id : ''
+    const bId = typeof b?.id === 'string' ? b.id : ''
+    return bId.localeCompare(aId)
+  })
+}
+
 export function GalleryContainer() {
-  const [viewMode, setViewMode] = useState('single')
+  const [viewMode, setViewMode] = useState('grid')
   const [currentIndex, setCurrentIndex] = useState(0)
   const [activeTags, setActiveTags] = useState([])
   const [authSession, setAuthSession] = useState(readInitialAuthSession)
@@ -324,7 +342,9 @@ export function GalleryContainer() {
 
       try {
         const response = await galleryApi.getBoardItems(activeBoardId, authOptions)
-        const nextItems = Array.isArray(response?.items) ? response.items : []
+        const nextItems = Array.isArray(response?.items)
+          ? sortItemsByCreatedAtDesc(response.items)
+          : []
 
         if (!isCancelled) {
           setItems(nextItems)

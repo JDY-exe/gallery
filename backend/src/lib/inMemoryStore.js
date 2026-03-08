@@ -194,7 +194,13 @@ export function createInMemoryStore() {
     getBoardItems(boardId) {
       const items = boardItems.get(boardId)
       if (!items) return null
-      return items.map(mapItemToApiShape)
+      return [...items]
+        .sort((a, b) => {
+          const createdAtDiff = (b.createdAt ?? '').localeCompare(a.createdAt ?? '')
+          if (createdAtDiff !== 0) return createdAtDiff
+          return String(b.id ?? '').localeCompare(String(a.id ?? ''))
+        })
+        .map(mapItemToApiShape)
     },
 
     createBoard({ ownerUserId, title, description = null, isPublic = true }) {
